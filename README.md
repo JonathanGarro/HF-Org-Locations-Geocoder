@@ -26,11 +26,6 @@ A Python utility for geocoding organization addresses from CSV files. This tool 
    pip install -r requirements.txt
    ```
 
-3. (Optional) For improved geocoding accuracy, install additional packages:
-   ```
-   pip install googlemaps python-dotenv
-   ```
-
 ## Configuration
 
 ### Required CSV Format
