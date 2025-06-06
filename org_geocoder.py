@@ -352,14 +352,14 @@ def geocode_csv(input_file, output_file=None, delay=1.0, encoding=None):
         print("Creating full address strings...")
         df['Full_Address'] = df.apply(create_full_address, axis=1)
 
-        df['Latitude'] = None
-        df['Longitude'] = None
-        df['Geocoding_Status'] = None
-        df['Geocoding_Method'] = None
-        df['CWA_Region'] = None
+        # Only initialize columns that don't already exist
+        for col in ['Latitude', 'Longitude', 'Geocoding_Status', 'Geocoding_Method', 'CWA_Region']:
+            if col not in df.columns:
+                df[col] = None
 
         total_rows = len(df)
         successful_geocodes = 0
+        existing_geocodes = 0
 
         print(f"Starting geocoding process with {delay}s delay between requests...")
         print("This may take a while for large datasets...")
@@ -372,20 +372,41 @@ def geocode_csv(input_file, output_file=None, delay=1.0, encoding=None):
                 df.at[idx, 'Geocoding_Status'] = 'Empty Address'
                 continue
 
-            print(f"Row {idx + 1}/{total_rows}: Geocoding '{address}'")
+            # Check if row already has valid geocoding data
+            has_geocoding_data = (
+                pd.notna(row['Latitude']) and 
+                pd.notna(row['Longitude']) and 
+                pd.notna(row['Geocoding_Status']) and 
+                pd.notna(row['Geocoding_Method'])
+            )
 
-            verbose = idx < 10
-            lat, lon, method = geocode_address_comprehensive(geolocator, address, gmaps_client, verbose)
+            if has_geocoding_data:
+                print(f"Row {idx + 1}/{total_rows}: Already has geocoding data, skipping geocoding")
+                lat, lon = row['Latitude'], row['Longitude']
+                existing_geocodes += 1
+                print(f"  ✓ Using existing coordinates: {lat:.6f}, {lon:.6f} ({row['Geocoding_Method']})")
+            else:
+                print(f"Row {idx + 1}/{total_rows}: Geocoding '{address}'")
+                verbose = idx < 10
+                lat, lon, method = geocode_address_comprehensive(geolocator, address, gmaps_client, verbose)
 
-            if lat is not None and lon is not None:
-                df.at[idx, 'Latitude'] = lat
-                df.at[idx, 'Longitude'] = lon
-                df.at[idx, 'Geocoding_Status'] = 'Success'
-                df.at[idx, 'Geocoding_Method'] = method
-                successful_geocodes += 1
-                print(f"  ✓ Found coordinates: {lat:.6f}, {lon:.6f} ({method})")
+                if lat is not None and lon is not None:
+                    df.at[idx, 'Latitude'] = lat
+                    df.at[idx, 'Longitude'] = lon
+                    df.at[idx, 'Geocoding_Status'] = 'Success'
+                    df.at[idx, 'Geocoding_Method'] = method
+                    successful_geocodes += 1
+                    print(f"  ✓ Found coordinates: {lat:.6f}, {lon:.6f} ({method})")
+                else:
+                    df.at[idx, 'Geocoding_Status'] = 'Failed'
+                    df.at[idx, 'Geocoding_Method'] = 'Failed'
+                    df.at[idx, 'CWA_Region'] = 'N/A'
+                    print(f"  ✗ All geocoding strategies failed")
+                    continue  # Skip CWA lookup if geocoding failed
 
-                # Get CWA region from weather.gov API
+            # Get CWA region from weather.gov API if we have coordinates
+            if pd.notna(lat) and pd.notna(lon) and pd.isna(row['CWA_Region']):
+                verbose = idx < 10
                 cwa_region = get_cwa_region(lat, lon, verbose)
                 if cwa_region:
                     df.at[idx, 'CWA_Region'] = cwa_region
@@ -393,11 +414,6 @@ def geocode_csv(input_file, output_file=None, delay=1.0, encoding=None):
                 else:
                     df.at[idx, 'CWA_Region'] = 'Not Found'
                     print(f"  ✗ Could not determine CWA region")
-            else:
-                df.at[idx, 'Geocoding_Status'] = 'Failed'
-                df.at[idx, 'Geocoding_Method'] = 'Failed'
-                df.at[idx, 'CWA_Region'] = 'N/A'
-                print(f"  ✗ All geocoding strategies failed")
 
             # rate limit the free service (be a good citizen and don't overload it)
             if idx < total_rows - 1:
@@ -414,12 +430,14 @@ def geocode_csv(input_file, output_file=None, delay=1.0, encoding=None):
 
         print(f"\nGeocoding Summary:")
         print(f"Total addresses processed: {total_rows}")
-        print(f"Successfully geocoded: {successful_geocodes}")
-        print(f"Failed to geocode: {total_rows - successful_geocodes}")
-        print(f"Success rate: {(successful_geocodes / total_rows) * 100:.1f}%")
+        print(f"Already had geocoding data: {existing_geocodes}")
+        print(f"Newly geocoded in this run: {successful_geocodes}")
+        print(f"Failed to geocode: {total_rows - successful_geocodes - existing_geocodes}")
+        print(f"Overall success rate: {((successful_geocodes + existing_geocodes) / total_rows) * 100:.1f}%")
 
-        if successful_geocodes > 0:
-            method_counts = df[df['Geocoding_Status'] == 'Success']['Geocoding_Method'].value_counts()
+        if successful_geocodes > 0 or existing_geocodes > 0:
+            # Include all rows with valid geocoding data in the method breakdown
+            method_counts = df[pd.notna(df['Geocoding_Method']) & (df['Geocoding_Method'] != 'Failed')]['Geocoding_Method'].value_counts()
             print(f"\nGeocoding method breakdown:")
             for method, count in method_counts.items():
                 print(f"  {method}: {count} addresses")
