@@ -10,8 +10,10 @@ A Python utility for geocoding organization addresses from CSV files. This tool 
   - ArcGIS
   - Google Maps API (optional)
 - Handles address simplification for better geocoding results
-- Provides detailed statistics on geocoding success rates
+- Retrieves County Warning Area (CWA) regions from the National Weather Service API
+- Provides detailed statistics on geocoding success rates and CWA regions
 - Rate-limits API calls to respect service usage policies
+- Skips geocoding for addresses that already have coordinates (incremental processing)
 
 ## Installation
 
@@ -70,16 +72,20 @@ python org_geocoder.py [-h] [-o OUTPUT] [-d DELAY] [-e ENCODING] input_file
 
 1. The script reads the input CSV file
 2. It creates full address strings from the separate address components
-3. For each address, it attempts geocoding using:
-   - Free service (Nominatim or ArcGIS) with full address
-   - Free service with simplified address (removing suite numbers, etc.)
-   - Google Maps API with full address (if configured)
-   - Google Maps API with simplified address (if configured)
-4. Results are saved to a new CSV file with added columns:
+3. For each address:
+   - If the address already has geocoding data (Latitude, Longitude, etc.), it skips the geocoding process
+   - Otherwise, it attempts geocoding using:
+     - Free service (Nominatim or ArcGIS) with full address
+     - Free service with simplified address (removing suite numbers, etc.)
+     - Google Maps API with full address (if configured)
+     - Google Maps API with simplified address (if configured)
+4. For addresses with coordinates, it retrieves the County Warning Area (CWA) region from the National Weather Service API
+5. Results are saved to a new CSV file with added columns:
    - Latitude
    - Longitude
    - Geocoding_Status (Success/Failed)
    - Geocoding_Method (which service and strategy worked)
+   - CWA_Region (the National Weather Service forecast office responsible for that location)
 
 ## Example
 
@@ -91,15 +97,18 @@ Some Org Name,1 Main St,Washington,DC,20431
 
 Output CSV:
 ```
-Organization Name,Primary Address Street,Primary Address City,Primary Address State/Province,Primary Address Zip/Postal Code,Latitude,Longitude,Geocoding_Status,Geocoding_Method
-Some Org Name,1 Main St,Washington,DC,20431,38.8989426,-77.0442051,Success,Free Service (Full)
+Organization Name,Primary Address Street,Primary Address City,Primary Address State/Province,Primary Address Zip/Postal Code,Latitude,Longitude,Geocoding_Status,Geocoding_Method,CWA_Region
+Some Org Name,1 Main St,Washington,DC,20431,38.8989426,-77.0442051,Success,Free Service (Full),LWX
 ```
+
+The CWA_Region "LWX" represents the National Weather Service forecast office in Sterling, VA, which covers the Washington DC area.
 
 ## Troubleshooting
 
 - If geocoding fails, try increasing the delay between requests (`-d` option)
 - If you encounter SSL errors, the script will attempt to work around them
 - For better results, consider getting a Google Maps API key
+- If CWA region lookup fails, it may be due to temporary National Weather Service API issues or the coordinates being outside the US (CWA regions only exist for US locations)
 
 ## License
 
