@@ -11,6 +11,8 @@ from geopy.exc import GeocoderTimedOut, GeocoderServiceError
 import argparse
 import sys
 import urllib3
+import requests
+import json
 
 # i get ssl warnings sometimes, disable if we need to bypass verification
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -37,24 +39,24 @@ def create_full_address(row):
     address_parts = []
 
     # street address if available
-    if pd.notna(row['Primary Address Street']) and row['Primary Address Street'].strip():
+    if pd.notna(row['Primary Address Street']) and str(row['Primary Address Street']).strip():
         # Clean up street address: remove newlines and extra spaces
         street = str(row['Primary Address Street']).replace('\n', ' ').replace('\r', ' ')
         street = ' '.join(street.split())  # Remove extra whitespace
         address_parts.append(street)
 
     # city
-    if pd.notna(row['Primary Address City']) and row['Primary Address City'].strip():
+    if pd.notna(row['Primary Address City']) and str(row['Primary Address City']).strip():
         city = str(row['Primary Address City']).strip()
         address_parts.append(city)
 
     # state
-    if pd.notna(row['Primary Address State/Province']) and row['Primary Address State/Province'].strip():
+    if pd.notna(row['Primary Address State/Province']) and str(row['Primary Address State/Province']).strip():
         state = str(row['Primary Address State/Province']).strip()
         address_parts.append(state)
 
     # zip code
-    if pd.notna(row['Primary Address Zip/Postal Code']) and row['Primary Address Zip/Postal Code'].strip():
+    if pd.notna(row['Primary Address Zip/Postal Code']) and str(row['Primary Address Zip/Postal Code']).strip():
         zip_code = str(row['Primary Address Zip/Postal Code']).strip()
         address_parts.append(zip_code)
 
@@ -217,6 +219,45 @@ def geocode_address_comprehensive(geolocator, address, gmaps_client=None, verbos
     return None, None, "Failed"
 
 
+def get_cwa_region(lat, lon, verbose=False):
+    """
+    Fetch the CWA (County Warning Area) region from the weather.gov API
+
+    Args:
+        lat (float): Latitude
+        lon (float): Longitude
+        verbose (bool): Whether to print verbose output
+
+    Returns:
+        str: CWA region code or None if not found
+    """
+    if lat is None or lon is None:
+        return None
+
+    try:
+        url = f"https://api.weather.gov/points/{lat:.4f},{lon:.4f}"
+        if verbose:
+            print(f"    Fetching CWA region from: {url}")
+
+        response = requests.get(url, timeout=10)
+
+        if response.status_code == 200:
+            data = response.json()
+            cwa = data.get('properties', {}).get('cwa')
+            if verbose:
+                print(f"    ✓ Found CWA region: {cwa}")
+            return cwa
+        else:
+            if verbose:
+                print(f"    ✗ Failed to get CWA region: HTTP {response.status_code}")
+            return None
+
+    except Exception as e:
+        if verbose:
+            print(f"    ✗ Error fetching CWA region: {e}")
+        return None
+
+
 def initialize_geocoder():
     print("Initializing geocoder")
 
@@ -315,6 +356,7 @@ def geocode_csv(input_file, output_file=None, delay=1.0, encoding=None):
         df['Longitude'] = None
         df['Geocoding_Status'] = None
         df['Geocoding_Method'] = None
+        df['CWA_Region'] = None
 
         total_rows = len(df)
         successful_geocodes = 0
@@ -342,9 +384,19 @@ def geocode_csv(input_file, output_file=None, delay=1.0, encoding=None):
                 df.at[idx, 'Geocoding_Method'] = method
                 successful_geocodes += 1
                 print(f"  ✓ Found coordinates: {lat:.6f}, {lon:.6f} ({method})")
+
+                # Get CWA region from weather.gov API
+                cwa_region = get_cwa_region(lat, lon, verbose)
+                if cwa_region:
+                    df.at[idx, 'CWA_Region'] = cwa_region
+                    print(f"  ✓ Found CWA region: {cwa_region}")
+                else:
+                    df.at[idx, 'CWA_Region'] = 'Not Found'
+                    print(f"  ✗ Could not determine CWA region")
             else:
                 df.at[idx, 'Geocoding_Status'] = 'Failed'
                 df.at[idx, 'Geocoding_Method'] = 'Failed'
+                df.at[idx, 'CWA_Region'] = 'N/A'
                 print(f"  ✗ All geocoding strategies failed")
 
             # rate limit the free service (be a good citizen and don't overload it)
@@ -371,6 +423,19 @@ def geocode_csv(input_file, output_file=None, delay=1.0, encoding=None):
             print(f"\nGeocoding method breakdown:")
             for method, count in method_counts.items():
                 print(f"  {method}: {count} addresses")
+
+            # Add CWA region summary
+            cwa_counts = df['CWA_Region'].value_counts()
+            cwa_found = len(df[df['CWA_Region'].notna() & (df['CWA_Region'] != 'Not Found') & (df['CWA_Region'] != 'N/A')])
+            print(f"\nCWA Region Summary:")
+            print(f"  Addresses with CWA region: {cwa_found}")
+            print(f"  Addresses without CWA region: {total_rows - cwa_found}")
+
+            if cwa_found > 0:
+                print(f"\nTop CWA regions:")
+                for cwa, count in cwa_counts.head(5).items():
+                    if cwa not in ['Not Found', 'N/A']:
+                        print(f"  {cwa}: {count} addresses")
 
     except FileNotFoundError:
         print(f"Error: Input file '{input_file}' not found")
