@@ -19,7 +19,7 @@ A Python utility for geocoding organization addresses from CSV files. This tool 
 
 1. Clone this repository:
    ```
-   git clone <repository-url>
+   git clone https://github.com/JonathanGarro/HF-Org-Locations-Geocoder
    cd Geocoding
    ```
 
