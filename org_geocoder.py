@@ -820,7 +820,7 @@ def main():
         description='Geocode organization addresses in CSV file with enhanced weather zone support',
         epilog='''
 Enhanced Zone Features:
-- Now captures BOTH forecast zones (DCZ001) AND CWA offices (LWX)
+- Captures BOTH forecast zones (DCZ001) AND CWA offices (LWX)
 - Forecast zones: Perfect for matching with weather.gov alert data
 - CWA offices: Perfect for mapping to CWA boundary shapefiles in Tableau
 - Backward compatible with original functionality
